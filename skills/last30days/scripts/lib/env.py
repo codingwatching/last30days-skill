@@ -410,6 +410,12 @@ def get_config() -> dict[str, Any]:
         ('OPENROUTER_API_KEY', None),
         ('PARALLEL_API_KEY', None),
         ('XQUIK_API_KEY', None),
+        # Host-native search signal: set by the SKILL.md agent-host path when the
+        # invoking runtime has its own (better) web-search tool, so the engine's
+        # keyless search floor stays off there. Defaults unset -> floor allowed.
+        ('LAST30DAYS_NATIVE_SEARCH', None),
+        # Optional SearXNG instance for the keyless-search fallback rung.
+        ('LAST30DAYS_SEARXNG_URL', None),
         ('FROM_BROWSER', None),
         ('SETUP_COMPLETE', None),
         ('INCLUDE_SOURCES', ''),
@@ -417,6 +423,10 @@ def get_config() -> dict[str, Any]:
         ('LAST30DAYS_DEFAULT_SEARCH', ''),
         ('LAST30DAYS_YOUTUBE_SSH_HOST', None),
         ('LAST30DAYS_TRANSCRIPT_TIMEOUT', None),
+        # Whisper transcription provider for caption-free audio/video. Groq's
+        # free tier is preferred; OPENAI_API_KEY is the paid backstop (already
+        # resolved above via openai_auth).
+        ('GROQ_API_KEY', None),
         ('LAST30DAYS_YT_SUB_LANGS', 'en,es,pt'),
     ]
 
@@ -668,6 +678,46 @@ def is_hackernews_available() -> bool:
     Always returns True - HN uses free Algolia API, no key needed.
     """
     return True
+
+
+def is_native_search(config: dict[str, Any]) -> bool:
+    """Whether the invoking host has its own (better) native web search.
+
+    Defined by capability, not host identity: the SKILL.md agent-host path sets
+    ``LAST30DAYS_NATIVE_SEARCH`` when the runtime actually has a native web-search
+    tool (e.g. Claude Code's WebSearch). When true, the engine's keyless search
+    floor is suppressed so a worse free search never preempts the model's own.
+    Defaults False (unset), so headless/cron and hosts without native search fall
+    to the keyless floor.
+    """
+    raw = config.get('LAST30DAYS_NATIVE_SEARCH')
+    if raw is None:
+        return False
+    return str(raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def keyless_web_allowed(config: dict[str, Any]) -> bool:
+    """Whether the engine may use its keyless web-search floor for this run.
+
+    Allowed only when the host does NOT have native search. Independent of
+    whether a paid key is set (the grounding dispatcher prefers paid first and
+    falls to keyless on empty/error for non-native runs).
+    """
+    return not is_native_search(config)
+
+
+def transcription_providers(config: dict[str, Any]) -> list[tuple[str, str]]:
+    """Ordered (name, api_key) Whisper providers for caption-free transcription.
+
+    Groq (free tier) first, OpenAI (paid) as the backstop. Empty when neither
+    key is set, in which case transcription degrades rather than runs.
+    """
+    providers: list[tuple[str, str]] = []
+    if config.get('GROQ_API_KEY'):
+        providers.append(('groq', config['GROQ_API_KEY']))
+    if config.get('OPENAI_API_KEY'):
+        providers.append(('openai', config['OPENAI_API_KEY']))
+    return providers
 
 
 def is_bluesky_available(config: dict[str, Any]) -> bool:

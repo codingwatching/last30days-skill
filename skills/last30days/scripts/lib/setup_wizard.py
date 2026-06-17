@@ -7,6 +7,7 @@ presents it), but this module provides the detection and setup actions.
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -107,6 +108,46 @@ def run_auto_setup(config: Dict[str, Any]) -> Dict[str, Any]:
     return results
 
 
+def _open_secret_append(path: Path):
+    """Open ``path`` for appending as a 0o600 secret file with no readable window.
+
+    ``os.open`` with ``O_CREAT|O_WRONLY|O_APPEND`` and mode ``0o600`` sets
+    restrictive permissions at creation (umask can only further restrict, never
+    widen, so the file is never world-readable even transiently). An explicit
+    ``chmod`` afterwards also tightens a pre-existing loose file. This matters
+    because the .env stores API keys, cookies, and tokens.
+    """
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_APPEND, 0o600)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return os.fdopen(fd, "a", encoding="utf-8")
+
+
+def _format_env_value(value: str) -> str:
+    """Quote a value so it round-trips through env.load_env_file.
+
+    env.load_env_file strips a single layer of matching surrounding quotes but
+    does NOT process backslash escapes, so we wrap (never escape):
+      - plain tokens (no whitespace, no leading quote): returned unchanged;
+      - values with whitespace/leading quote and no double-quote: double-quoted;
+      - values containing a double-quote but no single-quote: single-quoted;
+      - values containing both quote types: returned as-is (best effort; no
+        wrapper round-trips through the loader, and tokens never hit this).
+    Newlines are not valid in a single-line env value and are stripped.
+    """
+    value = value.replace("\r", "").replace("\n", " ")
+    needs_quoting = (not value) or value[0] in ("'", '"') or any(c.isspace() for c in value)
+    if not needs_quoting:
+        return value
+    if '"' not in value:
+        return f'"{value}"'
+    if "'" not in value:
+        return f"'{value}'"
+    return value
+
+
 def write_setup_config(env_path: Path, from_browser: str | None = None) -> bool:
     """Write SETUP_COMPLETE and FROM_BROWSER to the .env file.
 
@@ -144,13 +185,14 @@ def write_setup_config(env_path: Path, from_browser: str | None = None) -> bool:
         if "SETUP_COMPLETE" not in existing_keys:
             lines_to_add.append("SETUP_COMPLETE=true")
         if from_browser and "FROM_BROWSER" not in existing_keys:
-            lines_to_add.append(f"FROM_BROWSER={from_browser}")
+            lines_to_add.append(f"FROM_BROWSER={_format_env_value(from_browser)}")
 
         if not lines_to_add:
             return True  # Nothing to write, already configured
 
-        # Ensure trailing newline before appending
-        with open(env_path, "a", encoding="utf-8") as f:
+        # Create/append as a 0o600 secret file: the .env holds tokens and keys,
+        # so it must never be created world-readable.
+        with _open_secret_append(env_path) as f:
             if existing_content and not existing_content.endswith("\n"):
                 f.write("\n")
             f.write("\n".join(lines_to_add) + "\n")

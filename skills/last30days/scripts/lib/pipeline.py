@@ -112,15 +112,22 @@ def available_sources(config: dict[str, Any], requested_sources: list[str] | Non
     if which("yt-dlp") or env.is_youtube_sc_available(config):
         available.append("youtube")
     available.extend(["hackernews", "polymarket"])
-    if config.get("GITHUB_TOKEN") or which("gh"):
-        available.append("github")
+    # GitHub is reachable via the unauthenticated REST tier too, so it is
+    # available even without a token/gh CLI (a token only raises rate limits).
+    available.append("github")
     if which("digg-pp-cli"):
         available.append("digg")
     if env.is_bluesky_available(config):
         available.append("bluesky")
     if env.is_truthsocial_available(config):
         available.append("truthsocial")
-    if config.get("BRAVE_API_KEY") or config.get("EXA_API_KEY") or config.get("SERPER_API_KEY") or config.get("PARALLEL_API_KEY"):
+    # Grounding (general web) is available when a paid backend is configured OR
+    # the keyless floor is permitted (i.e. the host has no native search). On a
+    # native-search host with no paid key, keyless_web_allowed is False and the
+    # engine leaves general web to the model's own search.
+    if (config.get("BRAVE_API_KEY") or config.get("EXA_API_KEY")
+            or config.get("SERPER_API_KEY") or config.get("PARALLEL_API_KEY")
+            or env.keyless_web_allowed(config)):
         available.append("grounding")
     if requested_sources and "jobs" in requested_sources:
         available.append("jobs")
@@ -172,6 +179,7 @@ def diagnose(config: dict[str, Any], requested_sources: list[str] | None = None)
         "bird_authenticated": x_status["bird_authenticated"],
         "bird_username": x_status["bird_username"],
         "native_web_backend": native_web_backend,
+        "native_search": env.is_native_search(config),
         "has_scrapecreators": bool(config.get("SCRAPECREATORS_API_KEY")),
         "has_github": bool(config.get("GITHUB_TOKEN") or which("gh")),
         "available_sources": available_sources(config, requested_sources),
@@ -228,7 +236,7 @@ def run(
             available = [source for source in available if source in requested_sources]
     if web_backend == "none":
         available = [s for s in available if s != "grounding"]
-    elif web_backend in ("brave", "exa", "serper", "parallel") and "grounding" not in available:
+    elif web_backend in ("brave", "exa", "serper", "parallel", "keyless") and "grounding" not in available:
         available.append("grounding")
     if (hiring_signals_mode or _company_topic_likely(topic)) and "jobs" not in available:
         available.append("jobs")
@@ -490,10 +498,16 @@ def run(
         skip_sources=_github_skip_retry,
     )
 
-    # Clear errors for sources that returned items despite partial failures.
-    # A source that 429'd on one subquery but succeeded on another is not "errored".
+    # Reclassify partial failures as DEGRADED instead of silently dropping them.
+    # A source that 429'd on one subquery but succeeded on another is not a hard
+    # failure, but it is not healthy either: it likely returned fewer results
+    # than it should have. Move it out of errors_by_source (so it isn't reported
+    # as "failed") and into degraded_by_source (so it survives into warnings),
+    # rather than deleting the signal outright as the engine used to.
+    degraded_by_source: dict[str, str] = {}
     for source in list(bundle.errors_by_source):
         if bundle.items_by_source.get(source):
+            degraded_by_source[source] = bundle.errors_by_source[source]
             del bundle.errors_by_source[source]
 
     hiring_summary = _apply_hiring_signal_gate(
@@ -532,7 +546,7 @@ def run(
         )
 
     clusters = cluster_candidates(ranked_candidates, plan)
-    warnings = _warnings(items_by_source, ranked_candidates, bundle.errors_by_source)
+    warnings = _warnings(items_by_source, ranked_candidates, bundle.errors_by_source, degraded_by_source)
 
     return schema.Report(
         topic=topic,
@@ -700,6 +714,7 @@ def _warnings(
     items_by_source: dict[str, list[schema.SourceItem]],
     candidates: list[schema.Candidate],
     errors_by_source: dict[str, str],
+    degraded_by_source: dict[str, str] | None = None,
 ) -> list[str]:
     warnings: list[str] = []
     if not candidates:
@@ -715,6 +730,13 @@ def _warnings(
         warnings.append("Top evidence is highly concentrated in one source.")
     if errors_by_source:
         warnings.append(f"Some sources failed: {', '.join(sorted(errors_by_source))}")
+    if degraded_by_source:
+        # Partial failures: the source returned some items but errored/timed out
+        # on at least one subquery, so its coverage is likely incomplete. Kept
+        # distinct from hard failures so the signal is not silently dropped.
+        warnings.append(
+            f"Some sources returned partial results (degraded): {', '.join(sorted(degraded_by_source))}"
+        )
     if not items_by_source:
         warnings.append("No source returned usable items.")
     return warnings
@@ -1168,6 +1190,10 @@ def _retrieve_stream(
         token = github.resolve_token(config.get("GITHUB_TOKEN"))
         response = github.search_github(subquery.search_query, from_date, to_date, depth=depth, token=token)
         items = github.parse_github_response(response)
+        # Note: an unauth rate-limit (response["error"]) is expected on the
+        # tokenless anon tier and returns empty here rather than raising — github
+        # is now always eligible, so raising would spam "github failed" on every
+        # tokenless run. The condition is logged in github.search_github.
         items = github.enrich_with_comments(items, depth=depth, token=token)
         return items, {}
     if source == "pinterest":
