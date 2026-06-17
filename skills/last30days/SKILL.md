@@ -369,19 +369,17 @@ Common patterns:
 - `TOPIC_A = [first item]` (only if COMPARISON)
 - `TOPIC_B = [second item]` (only if COMPARISON)
 
-**Confirm the topic with a branded, truthful message. Build ACTIVE_SOURCES_LIST by checking what's configured in .env:**
+**Confirm the topic with a branded, truthful message. Build ACTIVE_SOURCES_LIST from the engine's own source diagnostic — do NOT infer availability by checking env vars or `.env`.** The engine resolves credentials at runtime from several places (process environment, `.env`, macOS Keychain, etc.), so a config-file check silently under-reports sources whenever a key is resolved at runtime rather than written literally in `.env`. Run the engine's `--diagnose` and read its result:
 
-- Always active: Reddit, Hacker News, Polymarket
-- If gh CLI is installed (check `which gh`): add GitHub
-- If digg-pp-cli is installed (check `which digg-pp-cli`): add Digg
-- If AUTH_TOKEN/CT0 or XAI_API_KEY or FROM_BROWSER is set, or xurl CLI is installed and authenticated: add X
-- If yt-dlp is installed (check `which yt-dlp`): add YouTube
-- If SCRAPECREATORS_API_KEY is set: add TikTok, Instagram, Threads (suppress any of these via EXCLUDE_SOURCES)
-- If SCRAPECREATORS_API_KEY is set and the user explicitly requested pinterest for this query (e.g. via `--search=pinterest`): add Pinterest
-- If the user asks for hiring signals, jobs pages, careers pages, focus shifts from hiring, or competitor hiring, add Jobs
-- If BSKY_HANDLE and BSKY_APP_PASSWORD are set: add Bluesky
-- If OPENROUTER_API_KEY is set and INCLUDE_SOURCES contains perplexity: add Perplexity
-- If EXCLUDE_SOURCES is set (comma-separated, case-insensitive): drop any matching source from the list above before displaying
+```bash
+SKILL_DIR="<absolute path of the directory containing the SKILL.md you just Read>"
+"${LAST30DAYS_PYTHON}" "${SKILL_DIR}/scripts/last30days.py" --diagnose
+```
+
+`--diagnose` prints JSON. `ACTIVE_SOURCES_LIST` is its `available_sources` array — the engine's authoritative source set, computed after credential resolution. Map the tokens to display names: `reddit`→Reddit, `hackernews`→Hacker News, `polymarket`→Polymarket, `github`→GitHub, `digg`→Digg, `x`→X, `youtube`→YouTube, `tiktok`→TikTok, `instagram`→Instagram, `threads`→Threads, `pinterest`→Pinterest, `bluesky`→Bluesky, `perplexity`→Perplexity, `grounding`→Web, `jobs`→Jobs.
+
+- If EXCLUDE_SOURCES is set (comma-separated, case-insensitive): drop any matching source from ACTIVE_SOURCES_LIST before displaying
+
 
 Then display (use "and more" if 5+ sources, otherwise list all with Oxford comma):
 
