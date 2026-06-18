@@ -91,7 +91,10 @@ def run_with_timeout(
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass  # process unkillable (e.g. D-state); leave as zombie
         raise SubprocTimeout(f"Command {cmd[0]} timed out after {timeout}s")
 
     return SubprocResult(
