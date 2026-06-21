@@ -100,7 +100,8 @@ def _config_text(config: dict, key: str) -> str:
 
 def _csv_values(raw: str, limit: int | None = None) -> list[str]:
     values = [part.strip() for part in raw.split(",") if part.strip()]
-    return values[:limit] if limit is not None else values
+    # values[:None] already returns the whole list, so no None guard is needed.
+    return values[:limit]
 
 
 def _direct_model(config: dict, deep: bool) -> str:
