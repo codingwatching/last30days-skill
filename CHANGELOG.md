@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.3] - 2026-07-04
+
+### Added
+
+- Optional remote research API backend (env-driven). When both `LAST30DAYS_API_KEY` and `LAST30DAYS_API_BASE` are set in the process environment (never read from `.env`), a search runs through the configured remote endpoint (submit -> poll with stderr progress -> render) instead of local sources; with either unset, behavior is byte-identical to local-only. Opt-in and inert by default (no built-in endpoint); the key is confined to the `Authorization` header and never logged or persisted. Handles the clarify gate and 401/402/429 paths. ([#747](https://github.com/mvanhorn/last30days-skill/pull/747))
+
+### Fixed
+
+- First-run wizard: the welcome message is now mandated before the setup modal (it was being skipped), the Auto-setup option lists every installed CLI (yt-dlp, Digg, arXiv, Techmeme, not just two), and the ScrapeCreators GitHub signup reliably surfaces the device code with an "it's on your clipboard, just paste" hint as a required step instead of leaving the user staring at a spinner. ([#746](https://github.com/mvanhorn/last30days-skill/pull/746))
+- ScrapeCreators GitHub signup: an already-linked account whose `.env` is cold no longer fails with the misleading "GitHub auth didn't complete." The `Authorized but failed to fetch API key` case now gets an honest branch (auth worked; the account is likely already linked -- get your key from scrapecreators.com and paste it), and `fetch_api_key` logs the `/profile` response field names (never values) so a full auto-fetch can follow. ([#746](https://github.com/mvanhorn/last30days-skill/pull/746))
+
 ## [3.9.2] - 2026-07-03
 
 ### Fixed
